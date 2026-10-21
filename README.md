@@ -47,16 +47,14 @@ openclaw plugins install --link .
 openclaw plugins enable cliproxyapi-websearch
 ```
 
-### 2. Configure & Enable
+### 2. Disable Built-in Web Search
 
 #### Option 1: Via CLI Commands (Recommended)
 
-Disable OpenClaw's built-in `web_search` tool (to avoid name conflicts), allow this plugin tool, and restart the gateway:
+Disable OpenClaw's built-in `web_search` tool (to avoid name conflicts) and restart the gateway:
 
 ```sh
-openclaw plugins enable cliproxyapi-websearch
 openclaw config set tools.web.search.enabled false --strict-json
-openclaw config set tools.alsoAllow '["cliproxyapi-websearch"]' --strict-json
 openclaw gateway restart
 ```
 
@@ -71,8 +69,7 @@ Or edit `~/.openclaw/openclaw.json` directly:
       "search": {
         "enabled": false
       }
-    },
-    "alsoAllow": ["cliproxyapi-websearch"]
+    }
   },
   "plugins": {
     "entries": {
@@ -152,16 +149,14 @@ openclaw plugins install --link .
 openclaw plugins enable cliproxyapi-websearch
 ```
 
-### 2. 配置与启用
+### 2. 关闭内置网络搜索
 
 #### 方式 1：通过命令行配置（推荐）
 
-关闭 OpenClaw 内置 `web_search`（避免同名冲突）、放行本插件工具并重启网关：
+关闭 OpenClaw 内置 `web_search`（避免同名冲突）并重启网关：
 
 ```sh
-openclaw plugins enable cliproxyapi-websearch
 openclaw config set tools.web.search.enabled false --strict-json
-openclaw config set tools.alsoAllow '["cliproxyapi-websearch"]' --strict-json
 openclaw gateway restart
 ```
 
@@ -176,8 +171,7 @@ openclaw gateway restart
       "search": {
         "enabled": false
       }
-    },
-    "alsoAllow": ["cliproxyapi-websearch"]
+    }
   },
   "plugins": {
     "entries": {
