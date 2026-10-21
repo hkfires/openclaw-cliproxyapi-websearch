@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import plugin from "../src/index.js";
@@ -52,7 +52,7 @@ describe("OpenClaw integration", () => {
     const [result] = await Promise.all([a.execute("1", { query: "a" }), b.execute("2", { query: "b" })]);
     expect(fetchFn.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).model)).toEqual(["current-a", "current-b"]);
     expect(result.content[0].text).toContain("EXTERNAL_UNTRUSTED_CONTENT");
-    expect(result.content[0].text).toContain("耗时");
+    expect(result.content[0].text).toMatch(/\n\nTook \d+\.\ds · cliproxyapi\/current-a$/);
     expect(JSON.stringify(result)).not.toContain("Bearer TEST");
   });
   it.each(["gpt-6.1-sol", "Custom-Model/Variant", "claude-test"])("sends the exact current model ID %s without capability filtering", async (modelId) => {
@@ -87,7 +87,7 @@ describe("OpenClaw integration", () => {
   ])("rejects missing or non-CPA provider metadata without auth or HTTP: %j", async (activeModel) => {
     const fetchFn = mockSearch(); const { factory } = register();
     const resolveApiKeyForProvider = vi.fn();
-    await expect(factory({ activeModel, resolveApiKeyForProvider }).execute("1", { query: "q" })).rejects.toThrow(/仅支持当前会话/);
+    await expect(factory({ activeModel, resolveApiKeyForProvider }).execute("1", { query: "q" })).rejects.toThrow(/only supports the current session's CLIProxyAPI model/);
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
     expect(fetchFn).not.toHaveBeenCalled();
   });
@@ -98,7 +98,7 @@ describe("OpenClaw integration", () => {
     { provider: "cliproxyapi", modelRef: "other/foreign" },
   ])("rejects missing CPA model IDs without fallback: %j", async (activeModel) => {
     const fetchFn = mockSearch(); const { factory } = register();
-    await expect(factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow(/模型 ID/);
+    await expect(factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow(/model ID/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
   it("ignores legacy model overrides, session files and broken model catalogs", async () => {
@@ -110,7 +110,7 @@ describe("OpenClaw integration", () => {
     const config = { ...api.config, plugins: { entries: { "cliproxyapi-websearch": { config: { searchModel: "old-configured", timeoutSeconds: 0, maxOutputChars: 1 } } } } };
     const result = await factory({ activeModel, sessionId: "old-session", config }).execute("1", { query: "q" });
     expect(result.details.model).toBe("current-model");
-    expect(result.details.truncated).toBe(false);
+    expect(result.details).not.toHaveProperty("truncated");
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
   it("reuses the configured CPA provider identity without plugin settings", async () => {
@@ -131,12 +131,13 @@ describe("OpenClaw integration", () => {
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer host-key");
     expect(resolveApiKeyForProvider).toHaveBeenCalledWith("cliproxyapi");
   });
-  it("uses fixed output protection without a setting", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(`data: ${JSON.stringify({ type: "response.output_text.done", text: "A".repeat(31000) })}\n\ndata: {"type":"response.completed"}\n\n`)));
+  it("returns long search results in full", async () => {
+    const text = `${"A".repeat(40000)}END`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`data: ${JSON.stringify({ type: "response.output_text.done", text })}\n\ndata: {"type":"response.completed"}\n\n`)));
     const { factory } = register();
     const result = await factory({ activeModel }).execute("1", { query: "q" });
-    expect(result.details.truncated).toBe(true);
-    expect(result.content[0].text).toContain("搜索结果已截断");
+    expect(result.content[0].text).toContain(text);
+    expect(result.details).not.toHaveProperty("truncated");
   });
   it("uses a fixed 120-second search timeout", async () => {
     const signal = new AbortController().signal;
@@ -147,6 +148,31 @@ describe("OpenClaw integration", () => {
       expect(timeout).toHaveBeenCalledWith(120000);
       expect(fetchFn).toHaveBeenCalledTimes(1);
     } finally { timeout.mockRestore(); }
+  });
+  it("reports the search timeout in English and keeps caller cancellation reasons", async () => {
+    const timeoutController = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
+    try {
+      vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      })));
+      const { factory } = register();
+      const pending = factory({ activeModel }).execute("1", { query: "q" });
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+      timeoutController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+      await expect(pending).rejects.toThrow("CLIProxyAPI web search timed out after 120 seconds; please retry.");
+    } finally { timeout.mockRestore(); }
+    const caller = new AbortController();
+    const cancelled = register().factory({ activeModel }).execute("2", { query: "q" }, caller.signal);
+    caller.abort(new Error("caller cancelled"));
+    await expect(cancelled).rejects.toThrow("caller cancelled");
+  });
+  it("keeps all plugin text in English", () => {
+    for (const file of readdirSync(new URL("../src/", import.meta.url))) {
+      const source = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
+      // CJK symbols/punctuation, ideographs and full-width forms.
+      expect(source, file).not.toMatch(/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/);
+    }
   });
   it("cancels stalled credential resolution before starting a search request", async () => {
     const fetchFn = mockSearch(); const { factory } = register();

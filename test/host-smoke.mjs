@@ -119,7 +119,7 @@ try {
   });
   const otherSearch = otherTools.find(tool => tool.name === 'web_search');
   assert.ok(otherSearch);
-  await assert.rejects(otherSearch.execute('other-call', { query: 'must not search' }), /仅支持当前会话/);
+  await assert.rejects(otherSearch.execute('other-call', { query: 'must not search' }), /only supports the current session's CLIProxyAPI model/);
   const missingModelTools = createOpenClawTools({
     config, workspaceDir: workspace, agentDir,
     modelProvider: 'cliproxyapi',
@@ -127,7 +127,7 @@ try {
   });
   const missingModelSearch = missingModelTools.find(tool => tool.name === 'web_search');
   assert.ok(missingModelSearch);
-  await assert.rejects(missingModelSearch.execute('missing-model-call', { query: 'must not search' }), /模型 ID/);
+  await assert.rejects(missingModelSearch.execute('missing-model-call', { query: 'must not search' }), /model ID/);
   assert.equal(bodies.length, 4, 'other providers and missing models never issue search requests');
   assert.deepEqual(inspection.plugin.commandNames ?? [], []);
   console.log('PASS: real host preserves body whitespace, reuses runtime provider URL/auth, normalizes legacy URLs, uses the current CPA model and UTC date, and rejects other providers/missing models without fallback.');

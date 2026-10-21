@@ -62,7 +62,7 @@ describe("configuration and credentials", () => {
   });
   it("does not reflect malformed config secrets", () => {
     const dir = state(); writeFileSync(join(dir, "cliproxyapi.json"), '{"apiKey":"SECRET" bad}');
-    expect(() => resolveConnection({}, dir)).toThrow(/无法读取/);
+    expect(() => resolveConnection({}, dir)).toThrow(/Failed to read CLIProxyAPI config/);
     try { resolveConnection({}, dir); } catch (error) { expect(String(error)).not.toContain("SECRET"); }
   });
   it("uses host config route without requiring the companion plugin", async () => {
@@ -95,7 +95,7 @@ describe("configuration and credentials", () => {
   it("does not hide host credential errors by silently using another key", async () => {
     vi.mocked(resolveHostApiKey).mockRejectedValueOnce(new Error("SECRET"));
     const pending = resolveHeaders({ provider: "cliproxyapi", endpoint: "https://host", apiKey: "old-key" }, {}, {});
-    await expect(pending).rejects.toThrow(/无法解析/);
+    await expect(pending).rejects.toThrow(/Failed to resolve CLIProxyAPI credentials/);
     await expect(pending).rejects.not.toThrow("SECRET");
   });
   it("preserves an existing authorization header case-insensitively", async () => {
@@ -125,14 +125,16 @@ describe("SSE", () => {
     controller.abort(); await expect(pending).rejects.toThrow();
     expect(cancel).toHaveBeenCalled(); expect(stream.locked).toBe(false);
   });
-  it("limits bytes and cancels upstream on parser failure", async () => {
+  it("does not limit response size", async () => {
+    const chunk = new TextEncoder().encode(`data: ${JSON.stringify({ text: "A".repeat(1024 * 1024) })}\n\n`);
+    const stream = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 9; i++) c.enqueue(chunk); c.close(); } });
+    let events = 0; await consumeSseStream(stream, () => { events++; });
+    expect(events).toBe(9);
+  });
+  it("cancels upstream on parser failure", async () => {
     const cancel = vi.fn();
-    const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(10)); }, cancel });
-    await expect(consumeSseStream(stream, () => {}, undefined, 5)).rejects.toThrow(/大小限制/);
+    const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('data: {}\n\n')); }, cancel });
+    await expect(consumeSseStream(stream, () => { throw new Error("handler"); })).rejects.toThrow("handler");
     expect(cancel).toHaveBeenCalled();
-    const cancel2 = vi.fn();
-    const stream2 = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('data: {}\n\n')); }, cancel: cancel2 });
-    await expect(consumeSseStream(stream2, () => { throw new Error("handler"); })).rejects.toThrow("handler");
-    expect(cancel2).toHaveBeenCalled();
   });
 });

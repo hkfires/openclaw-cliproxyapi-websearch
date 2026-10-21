@@ -46,19 +46,17 @@ export function createSseParser(onEvent: (event: SseEvent) => void | boolean) {
   };
 }
 
-/** Bound memory and cancel pending reads promptly, even on a stalled upstream. */
+/** Cancel pending reads promptly, even on a stalled upstream. Response size is not limited. */
 export async function consumeSseStream(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: SseEvent) => void | boolean,
   signal?: AbortSignal,
-  maxBytes = 8 * 1024 * 1024,
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const parser = createSseParser(onEvent);
   const abort = () => { void reader.cancel().catch(() => {}); };
   signal?.addEventListener("abort", abort, { once: true });
-  let bytes = 0;
   let finished = false;
   try {
     signal?.throwIfAborted();
@@ -71,8 +69,6 @@ export async function consumeSseStream(
         finished = true;
         return;
       }
-      bytes += value.byteLength;
-      if (bytes > maxBytes) throw new Error("搜索响应超过大小限制。");
       parser.push(decoder.decode(value, { stream: true }));
       if (parser.stopped) return;
     }

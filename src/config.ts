@@ -27,7 +27,7 @@ export function readJsonObject(path: string): Record<string, unknown> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     // Do not reflect JSON snippets: provider files may contain credentials.
-    throw new Error("无法读取 CLIProxyAPI 配置，请检查文件格式和权限。");
+    throw new Error("Failed to read CLIProxyAPI config; check the file format and permissions.");
   }
 }
 
@@ -43,7 +43,7 @@ export function resolveConnection(cfg: HostConfig, configDir = getConfigDir()): 
   const file = readJsonObject(join(configDir, "cliproxyapi.json"));
   const provider = firstString(process.env.CLIPROXYAPI_PROVIDER_ID, process.env.CPA_PROVIDER_ID, file.providerId) ?? "cliproxyapi";
   const providerConfig = cfg.models?.providers?.[provider];
-  // Like Pi, prefer the host's effective provider connection over discovery defaults.
+  // Prefer the host's effective provider connection over discovery defaults.
   const baseUrl = firstString(
     providerConfig?.baseUrl,
     process.env.CLIPROXYAPI_BASE_URL, process.env.CPA_BASE_URL, file.baseUrl,
@@ -64,7 +64,7 @@ export async function resolveHeaders(
   const headers = new Headers();
   for (const [name, value] of Object.entries(connection.headers ?? {})) {
     if (typeof value !== "string" || /\$\{[^}]+\}/.test(value)) {
-      throw new Error("Provider 请求头包含未解析的凭据，请检查 OpenClaw SecretRef 配置。");
+      throw new Error("Provider headers contain unresolved credentials; check the OpenClaw SecretRef configuration.");
     }
     headers.set(name, value);
   }
@@ -80,11 +80,11 @@ export async function resolveHeaders(
       }
     } catch (error) {
       if (!isRecord(error) || error.code !== "missing-provider-auth") {
-        throw new Error("无法解析 CLIProxyAPI 凭据，请先配置 openclaw-cliproxyapi-provider。");
+        throw new Error("Failed to resolve CLIProxyAPI credentials; configure openclaw-cliproxyapi-provider first.");
       }
     }
     apiKey ||= connection.apiKey;
-    if (!apiKey) throw new Error("缺少 CLIProxyAPI API Key，请先配置 Provider。");
+    if (!apiKey) throw new Error("Missing CLIProxyAPI API key; configure the provider first.");
     headers.set("authorization", `Bearer ${apiKey}`);
   }
   return headers;

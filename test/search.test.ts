@@ -4,7 +4,7 @@ import { executeWebSearch } from "../src/search.js";
 function response(events: unknown[]) {
   return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
-const base = { query: "  最新资料  ", model: "gpt-5.5", provider: "cliproxyapi", endpoint: "https://cpa.test/v1/responses", headers: new Headers({ authorization: "Bearer TEST" }), signal: new AbortController().signal, maxOutputChars: 30000 };
+const base = { query: "  最新资料  ", model: "gpt-5.5", provider: "cliproxyapi", endpoint: "https://cpa.test/v1/responses", headers: new Headers({ authorization: "Bearer TEST" }), signal: new AbortController().signal };
 const completed = { type: "response.completed" };
 const message = (text: string) => ({ type: "message", content: [{ type: "output_text", text }] });
 
@@ -27,7 +27,7 @@ describe("search transport", () => {
     expect(body).toMatchObject({ model: "gpt-5.5", tools: [{ type: "web_search" }], stream: true, store: false, input: [{ role: "user", content: [{ type: "input_text", text: "最新资料" }] }] });
     expect(Object.keys(body).sort()).toEqual(["input", "instructions", "model", "store", "stream", "tools"]);
     expect(result.text).toContain("搜索摘要"); expect(result.text).toContain("https://example.org/");
-    expect(result.details).toMatchObject({ model: "gpt-5.5", sourcesCount: 1, truncated: false });
+    expect(result.details).toMatchObject({ model: "gpt-5.5", sourcesCount: 1 });
     expect(result.details.durationMs).toBeGreaterThanOrEqual(0);
     expect(updates.mock.calls.map(([u]) => u.details.phase)).toEqual(["starting", "searching", "analyzing", "generating"]);
   });
@@ -53,7 +53,7 @@ describe("search transport", () => {
       vi.useRealTimers();
     }
   });
-  it("uses message-item text and citations when no delta/done text is available, like Pi", async () => {
+  it("uses message-item text and citations when no delta/done text is available", async () => {
     const result = await executeWebSearch({ ...base, fetchFn: async () => response([
       { type: "response.output_item.done", item: { type: "message", content: [{ type: "output_text", text: "完整摘要", annotations: [{ url: "https://source.test/", title: "Source" }] }] } },
       { type: "response.completed", response: { status: "completed", output: [] } },
@@ -113,7 +113,7 @@ describe("search transport", () => {
     ]) });
     expect(result.text).toBe(text);
   });
-  it("keeps streamed text instead of replacing it with later snapshots, like Pi", async () => {
+  it("keeps streamed text instead of replacing it with later snapshots", async () => {
     const text = "Original streamed summary.";
     const result = await executeWebSearch({ ...base, fetchFn: async () => response([
       { type: "response.output_text.delta", delta: text },
@@ -123,7 +123,7 @@ describe("search transport", () => {
     ]) });
     expect(result.text).toBe(text);
   });
-  it("joins fallback message parts without adding separators, like Pi", async () => {
+  it("joins fallback message parts without adding separators", async () => {
     const result = await executeWebSearch({ ...base, fetchFn: async () => response([
       { type: "response.output_item.done", item: { type: "message", content: ["Hello", " ", "World"].map((text) => ({ type: "output_text", text })) } },
       completed,
@@ -137,7 +137,7 @@ describe("search transport", () => {
     ]) });
     expect(result.text).toBe("Streamed summary\n\n## Sources\n1. [Source](https://source.test/)");
   });
-  it("keeps existing inline links unchanged while exposing other sources separately, like Pi", async () => {
+  it("keeps existing inline links unchanged while exposing other sources separately", async () => {
     const text = "See [Example](https://example.com/) for details.";
     const result = await executeWebSearch({ ...base, fetchFn: async () => response([
       { type: "response.output_text.done", text },
@@ -147,27 +147,38 @@ describe("search transport", () => {
     expect(result.text).toBe(text);
     expect(result.details.sourcesCount).toBe(1);
   });
-  it("does not use completed-only text as the body, like Pi", async () => {
+  it("does not use completed-only text as the body", async () => {
     await expect(executeWebSearch({ ...base, fetchFn: async () => response([
       { type: "response.completed", response: { output: [message("Snapshot only")] } },
-    ]) })).rejects.toThrow(/没有返回/);
+    ]) })).rejects.toThrow(/no result text/);
   });
   it("rejects truncated streams even if partial text exists", async () => {
-    await expect(executeWebSearch({ ...base, fetchFn: async () => response([{ type: "response.output_text.delta", delta: "partial" }]) })).rejects.toThrow(/意外中断/);
+    await expect(executeWebSearch({ ...base, fetchFn: async () => response([{ type: "response.output_text.delta", delta: "partial" }]) })).rejects.toThrow(/ended unexpectedly/);
   });
   it.each(["error", "response.failed", "response.incomplete", "response.cancelled"])("rejects %s without echoing backend secrets", async (type) => {
     const promise = executeWebSearch({ ...base, fetchFn: async () => response([{ type, error: { message: "SECRET" } }]) });
-    await expect(promise).rejects.toThrow(/失败或未完成/);
+    await expect(promise).rejects.toThrow(/failed or was incomplete/);
     await expect(promise).rejects.not.toThrow(/SECRET/);
   });
-  it.each([401, 403, 429, 500])("reports only HTTP status %s", async (status) => {
+  it.each([
+    [400, "(HTTP 400): unknown model or no native web search."],
+    [401, "(HTTP 401): invalid API key."],
+    [403, "(HTTP 403): access denied."],
+    [404, "(HTTP 404): endpoint or model not found."],
+    [429, "(HTTP 429): rate limited or cooling down."],
+    [500, "(HTTP 500): server error."],
+    [502, "(HTTP 502): server error."],
+    [503, "(HTTP 503): no available credentials."],
+    [418, "(HTTP 418)."],
+  ])("reports HTTP status %s with a fixed hint and no upstream body", async (status, hint) => {
     const promise = executeWebSearch({ ...base, fetchFn: async () => new Response('SECRET', { status }) });
-    await expect(promise).rejects.toThrow(`HTTP ${status}`);
+    await expect(promise).rejects.toThrow(`CLIProxyAPI web search failed (HTTP ${status})`);
+    await expect(promise).rejects.toThrow(hint);
     await expect(promise).rejects.not.toThrow("SECRET");
   });
   it("rejects empty output and unexpected JSON", async () => {
-    await expect(executeWebSearch({ ...base, fetchFn: async () => response([completed]) })).rejects.toThrow(/没有返回/);
-    await expect(executeWebSearch({ ...base, fetchFn: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }) })).rejects.toThrow(/未返回 SSE/);
+    await expect(executeWebSearch({ ...base, fetchFn: async () => response([completed]) })).rejects.toThrow(/no result text/);
+    await expect(executeWebSearch({ ...base, fetchFn: async () => new Response('{}', { headers: { 'content-type': 'application/json' } }) })).rejects.toThrow(/did not return an SSE stream/);
   });
   it.each(["delta", "done", "item"])("preserves leading/trailing whitespace from %s output", async (source) => {
     const text = "    print(1)\n    print(2)  \n\n\t";
@@ -192,11 +203,17 @@ describe("search transport", () => {
           : { type: "response.output_text.done", text },
         { type: "response.completed", response: { status: "completed", output: [] } },
       ];
-    await expect(executeWebSearch({ ...base, fetchFn: async () => response(events) })).rejects.toThrow(/没有返回/);
+    await expect(executeWebSearch({ ...base, fetchFn: async () => response(events) })).rejects.toThrow(/no result text/);
   });
-  it("bounds final output and marks truncation", async () => {
-    const result = await executeWebSearch({ ...base, maxOutputChars: 1000, fetchFn: async () => response([{ type: "response.output_text.done", text: "A".repeat(1500) }, completed]) });
-    expect(result.text.length).toBeLessThan(1100); expect(result.details.truncated).toBe(true);
+  it("returns long results in full with the source list", async () => {
+    const text = `${"A".repeat(40000)}END`;
+    const result = await executeWebSearch({ ...base, fetchFn: async () => response([
+      { type: "response.output_text.done", text },
+      { type: "response.output_item.done", item: { type: "web_search_call", action: { sources: [{ url: "https://source.test/", title: "Source" }] } } },
+      completed,
+    ]) });
+    expect(result.text).toBe(`${text}\n\n## Sources\n1. [Source](https://source.test/)`);
+    expect(result.details).not.toHaveProperty("truncated");
   });
   it("rejects empty/oversized queries without a request", async () => {
     const fetchFn = vi.fn();
