@@ -1,7 +1,7 @@
 {
   "id": "cliproxyapi-websearch",
   "name": "CLIProxyAPI Web Search",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zero-configuration native web search plugin for CLIProxyAPI in OpenClaw",
   "contracts": { "tools": ["web_search"] },
   "toolMetadata": { "web_search": { "profiles": ["coding", "messaging"] } },
