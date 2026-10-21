@@ -1,0 +1,15 @@
+{
+  "id": "cliproxyapi-websearch",
+  "name": "CLIProxyAPI Web Search",
+  "version": "0.1.0",
+  "description": "复用 CLIProxyAPI 连接的原生网络搜索工具",
+  "categories": ["web", "tools"],
+  "contracts": { "tools": ["web_search"] },
+  "toolMetadata": { "web_search": { "profiles": ["coding", "messaging"] } },
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

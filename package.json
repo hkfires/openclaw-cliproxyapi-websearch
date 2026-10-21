@@ -1,0 +1,44 @@
+{
+  "name": "openclaw-cliproxyapi-websearch",
+  "version": "0.1.0",
+  "description": "Native CLIProxyAPI web search for OpenClaw using existing provider credentials",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hkfires/openclaw-cliproxyapi-websearch.git"
+  },
+  "homepage": "https://github.com/hkfires/openclaw-cliproxyapi-websearch#readme",
+  "bugs": {
+    "url": "https://github.com/hkfires/openclaw-cliproxyapi-websearch/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": ["openclaw", "openclaw-plugin", "cliproxyapi", "web-search"],
+  "files": ["dist", "openclaw.plugin.json", "README.md", "LICENSE"],
+  "engines": { "node": ">=24.16.0 <25 || >=26.1.0" },
+  "scripts": {
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\" && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
+    "test:host": "npm run build && node test/host-smoke.mjs",
+    "prepack": "npm run check && npm run build"
+  },
+  "openclaw": {
+    "extensions": ["./dist/index.js"],
+    "compat": { "pluginApi": ">=2026.9.4", "minGatewayVersion": "2026.9.4" }
+  },
+  "peerDependencies": { "openclaw": ">=2026.9.4" },
+  "peerDependenciesMeta": { "openclaw": { "optional": true } },
+  "dependencies": { "typebox": "^1.3.33" },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "openclaw": "2026.9.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}
