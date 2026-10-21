@@ -24,12 +24,19 @@ A native `web_search` plugin for [OpenClaw](https://github.com/openclaw) paired 
 
 ```sh
 # 1. Install and enable the CLIProxyAPI provider plugin (if not already installed)
-openclaw plugins install npm:openclaw-cliproxyapi-provider
+openclaw plugins install clawhub:openclaw-cliproxyapi-provider
 openclaw plugins enable cliproxyapi
 
 # 2. Install and enable this web search plugin
-openclaw plugins install npm:openclaw-cliproxyapi-websearch
+openclaw plugins install clawhub:openclaw-cliproxyapi-websearch
 openclaw plugins enable cliproxyapi-websearch
+```
+
+Or install from npm:
+
+```sh
+openclaw plugins install npm:openclaw-cliproxyapi-provider
+openclaw plugins install npm:openclaw-cliproxyapi-websearch
 ```
 
 Local development install:
@@ -122,12 +129,19 @@ npm run build      # Build
 
 ```sh
 # 1. 安装并启用 CLIProxyAPI Provider 插件（若未安装）
-openclaw plugins install npm:openclaw-cliproxyapi-provider
+openclaw plugins install clawhub:openclaw-cliproxyapi-provider
 openclaw plugins enable cliproxyapi
 
 # 2. 安装并启用本搜索插件
-openclaw plugins install npm:openclaw-cliproxyapi-websearch
+openclaw plugins install clawhub:openclaw-cliproxyapi-websearch
 openclaw plugins enable cliproxyapi-websearch
+```
+
+也可以从 npm 安装：
+
+```sh
+openclaw plugins install npm:openclaw-cliproxyapi-provider
+openclaw plugins install npm:openclaw-cliproxyapi-websearch
 ```
 
 本地开发安装：
