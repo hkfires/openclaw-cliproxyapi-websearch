@@ -1,6 +1,6 @@
 {
   "name": "openclaw-cliproxyapi-websearch",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Native web search plugin for CLIProxyAPI in OpenClaw",
   "type": "module",
   "main": "dist/index.js",

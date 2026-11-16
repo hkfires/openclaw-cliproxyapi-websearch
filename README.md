@@ -43,9 +43,11 @@ npm ci && npm run build
 openclaw plugins install --link .
 ```
 
+When installing from a separate shell while the Gateway is running, restart it after installation to load the plugin: `openclaw gateway restart`.
+
 ### 2. Configure
 
-Disable OpenClaw's built-in `web_search` tool to avoid name conflicts, and optionally configure a preferred `searchModel`. Changes take effect automatically via hot reload without manual Gateway restart.
+Disable OpenClaw's built-in `web_search` tool to avoid name conflicts, and optionally configure a preferred `searchModel`. Configuration changes can be applied by Gateway hot reload when enabled.
 
 #### Option 1: Via CLI Commands (Recommended)
 
@@ -146,9 +148,11 @@ npm ci && npm run build
 openclaw plugins install --link .
 ```
 
+如果在独立终端中安装且网关正在运行，安装后重启网关以加载插件：`openclaw gateway restart`。
+
 ### 2. 配置
 
-关闭 OpenClaw 内置 `web_search` 以避免同名冲突，并可按需指定专用搜索模型 `searchModel`。修改会自动热加载生效，无需手动重启网关。
+关闭 OpenClaw 内置 `web_search` 以避免同名冲突，并可按需指定专用搜索模型 `searchModel`。启用网关热重载时，配置修改可自动生效。
 
 #### 方式 1：通过命令行配置（推荐）
 
