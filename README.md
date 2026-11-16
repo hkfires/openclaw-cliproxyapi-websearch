@@ -11,6 +11,8 @@ A native `web_search` plugin for [OpenClaw](https://github.com/openclaw) paired 
 - **Isolated Sub-requests**: Dispatches standalone Responses requests containing only the native `web_search` tool, without session history or local tools.
 - **Sources & Elapsed Time**: Streams search results and returns the summary, deduplicated source links, and execution time.
 
+Safety limits: 32 MiB per response, 4 MiB per SSE line/event, and 8 MiB of retained result text (UTF-8 bytes). Exceeding a limit stops the search with an error, without truncation or model fallback.
+
 ## Requirements
 
 - **OpenClaw**: `>=2026.9.4`
@@ -115,6 +117,8 @@ npm run build      # Build
 - **跟随当前模型与按需回退**：默认使用当前会话的 CLIProxyAPI 模型；也可配置专用 `searchModel`，不可用时自动回退到当前会话模型。
 - **纯净子请求**：独立发起仅包含原生 `web_search` 的 Responses 请求，不携带会话历史或本地工具，避免混合工具冲突。
 - **自动附加来源与耗时**：流式接收搜索结果，返回总结、去重来源链接与执行耗时。
+
+安全上限：每次响应 32 MiB、单行/单个 SSE 事件 4 MiB、累计保留结果文本 8 MiB（按 UTF-8 字节计）。超限立即终止并报错，不截断结果，也不触发模型回退。
 
 ## 环境要求
 

@@ -138,8 +138,8 @@ describe("SSE", () => {
     controller.abort(); await expect(pending).rejects.toThrow();
     expect(cancel).toHaveBeenCalled(); expect(stream.locked).toBe(false);
   });
-  it("does not limit response size", async () => {
-    const chunk = new TextEncoder().encode(`data: ${JSON.stringify({ text: "A".repeat(1024 * 1024) })}\n\n`);
+  it("accepts large responses within the safety limits", async () => {
+    const chunk = new TextEncoder().encode(`data: ${JSON.stringify({ text: "A".repeat(40000) })}\n\n`);
     const stream = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 9; i++) c.enqueue(chunk); c.close(); } });
     let events = 0; await consumeSseStream(stream, () => { events++; });
     expect(events).toBe(9);

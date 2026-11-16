@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { isRecord } from "./config.js";
 import { consumeSseStream } from "./sse.js";
 
@@ -12,6 +13,7 @@ const HTTP_ERROR_HINTS: Record<number, string> = {
   503: "no available credentials",
 };
 const FALLBACK_HTTP_STATUSES = new Set([400, 404, 429, 503]);
+export const MAX_SEARCH_TEXT_BYTES = 8 * 1024 * 1024;
 
 export class WebSearchError extends Error {
   readonly fallbackEligible: boolean;
@@ -87,6 +89,15 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
   // Prefer accumulated deltas/done text, with message items as fallback.
   let outputText = "";
   const messageParts: string[] = [];
+  let retainedTextBytes = 0;
+  // Share one budget across streamed text, fallback messages and appended sources.
+  const reserveText = (text: string) => {
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > MAX_SEARCH_TEXT_BYTES - retainedTextBytes) {
+      throw new Error("CLIProxyAPI search result text exceeded the 8 MiB safety limit.");
+    }
+    retainedTextBytes += bytes;
+  };
   let completed = false;
   let lastUpdate = 0;
   let phase = "starting";
@@ -128,13 +139,17 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
       phase = "analyzing";
       progress(phase, "Analyzing search results...");
     } else if (type === "response.output_text.delta" && typeof data.delta === "string") {
+      reserveText(data.delta);
       outputText += data.delta;
       if (Date.now() - lastUpdate >= 100) {
         lastUpdate = Date.now();
         progress("generating", "Summarizing results...");
       }
     } else if (type === "response.output_text.done" && typeof data.text === "string") {
-      if (!outputText) outputText = data.text;
+      if (!outputText) {
+        reserveText(data.text);
+        outputText = data.text;
+      }
       progress("generating", "Summarizing results...");
     } else if (type === "response.content_part.done") {
       extractPart(data.part);
@@ -145,7 +160,10 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
       extractSourcesFromItem(item);
       if (isRecord(item) && item.type === "message" && Array.isArray(item.content)) {
         for (const part of item.content) {
-          if (isRecord(part) && (part.type === "output_text" || part.type === "text") && typeof part.text === "string") messageParts.push(part.text);
+          if (isRecord(part) && (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text) {
+            reserveText(part.text);
+            messageParts.push(part.text);
+          }
         }
       }
     } else if (type === "response.completed") {
@@ -164,10 +182,12 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
   // Preserve body whitespace; only whitespace-only text counts as empty.
   let text = /\S/.test(outputText) ? outputText : messageParts.join("");
   if (!/\S/.test(text)) throw new Error("Search finished but returned no result text.");
-  // Return the complete summary; the host owns any context-size policy.
+  // Return the complete summary within the safety budget; never truncate oversized results.
   if (sources.size && !text.includes("http://") && !text.includes("https://")) {
     const sourceLines = [...sources.values()].slice(0, 8).map((source, i) => `${i + 1}. [${source.title || source.url}](${source.url})`);
-    text += `\n\n## Sources\n${sourceLines.join("\n")}`;
+    const suffix = `\n\n## Sources\n${sourceLines.join("\n")}`;
+    reserveText(suffix);
+    text += suffix;
   }
   return {
     text,

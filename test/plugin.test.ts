@@ -4,6 +4,8 @@ import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import plugin from "../src/index.js";
+import { MAX_SEARCH_TEXT_BYTES } from "../src/search.js";
+import { MAX_SSE_EVENT_BYTES, MAX_SSE_LINE_BYTES, MAX_SSE_RESPONSE_BYTES } from "../src/sse.js";
 
 let dir: string;
 beforeEach(() => {
@@ -197,6 +199,39 @@ describe("OpenClaw integration", () => {
     vi.stubGlobal("fetch", sameFetch);
     await expect(register({ searchModel: "current-model" }).factory({ activeModel }).execute("5", { query: "q" })).rejects.toThrow("HTTP 400");
     expect(sameFetch).toHaveBeenCalledTimes(1);
+  });
+  it.each(["line", "event", "response", "text"])("does not fall back after exceeding the %s safety limit", async (limit) => {
+    const encoder = new TextEncoder();
+    let chunks: Uint8Array[];
+    if (limit === "line") {
+      chunks = [encoder.encode("X".repeat(MAX_SSE_LINE_BYTES + 1))];
+    } else if (limit === "event") {
+      const chunk = encoder.encode(`data: ${"X".repeat(16 * 1024)}\n`);
+      chunks = Array.from({ length: Math.floor(MAX_SSE_EVENT_BYTES / chunk.byteLength) + 1 }, () => chunk);
+    } else if (limit === "response") {
+      const chunk = encoder.encode(`:${"X".repeat(4093)}\n\n`);
+      chunks = Array.from({ length: MAX_SSE_RESPONSE_BYTES / chunk.byteLength + 1 }, () => chunk);
+    } else {
+      const delta = "X".repeat(64 * 1024);
+      chunks = Array.from({ length: MAX_SEARCH_TEXT_BYTES / delta.length + 1 }, () => encoder.encode(`data: ${JSON.stringify({ type: "response.output_text.delta", delta })}\n\n`));
+    }
+    const cancel = vi.fn();
+    let index = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (index < chunks.length) controller.enqueue(chunks[index++]!);
+      },
+      cancel,
+    });
+    const fetchFn = vi.fn(async () => new Response(stream));
+    vi.stubGlobal("fetch", fetchFn);
+    const { factory } = register({ searchModel: "preferred-search" });
+    const updates = vi.fn();
+    await expect(factory({ activeModel }).execute("1", { query: "q" }, undefined, updates)).rejects.toThrow(/safety limit/);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(updates.mock.calls.some(([u]) => u.details.phase === "fallback")).toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(stream.locked).toBe(false);
   });
   it("does not fall back after caller cancellation or search timeout, and propagates fallback failure", async () => {
     const timeoutController = new AbortController();
