@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveApiKeyForProvider as resolveHostApiKey } from "openclaw/plugin-sdk/agent-runtime";
-import { resolveConnection, resolveHeaders } from "../src/config.js";
+import { resolveConnection, resolveHeaders, resolveSearchModel } from "../src/config.js";
 import { resolveResponsesEndpoint } from "../src/endpoint.js";
 import { consumeSseStream, createSseParser } from "../src/sse.js";
 
@@ -101,6 +101,19 @@ describe("configuration and credentials", () => {
   it("preserves an existing authorization header case-insensitively", async () => {
     const headers = await resolveHeaders({ provider: "cliproxyapi", endpoint: "https://host", apiKey: "not-used", headers: { Authorization: "Custom test" } }, {}, {});
     expect(headers.get("authorization")).toBe("Custom test");
+  });
+  it("resolves optional searchModel from runtime config or pluginConfig and normalizes provider prefix", () => {
+    expect(resolveSearchModel({}, "cliproxyapi")).toBeUndefined();
+    expect(resolveSearchModel({}, "cliproxyapi", { searchModel: "   " })).toBeUndefined();
+    expect(resolveSearchModel({}, "cliproxyapi", { searchModel: " gpt-5.4 " })).toBe("gpt-5.4");
+    expect(resolveSearchModel({}, "cliproxyapi", { searchModel: "cliproxyapi/gpt-5.4" })).toBe("gpt-5.4");
+    expect(resolveSearchModel({}, "cliproxyapi", { searchModel: "Custom-Model/Variant" })).toBe("Custom-Model/Variant");
+    const runtimeCleared = { plugins: { entries: { "cliproxyapi-websearch": { config: { searchModel: "" } } } } };
+    expect(resolveSearchModel(runtimeCleared, "cliproxyapi", { searchModel: "stale-model" })).toBeUndefined();
+    const runtimeSet = { plugins: { entries: { "cliproxyapi-websearch": { config: { searchModel: "my-cpa/runtime-model" } } } } };
+    expect(resolveSearchModel(runtimeSet, "my-cpa", { searchModel: "stale-model" })).toBe("runtime-model");
+    expect(() => resolveSearchModel({}, "cliproxyapi", { searchModel: 123 })).toThrow(/must be a string/);
+    expect(() => resolveSearchModel({}, "cliproxyapi", { searchModel: "cliproxyapi/  " })).toThrow(/missing a model ID/);
   });
 
 });

@@ -11,6 +11,18 @@ const HTTP_ERROR_HINTS: Record<number, string> = {
   429: "rate limited or cooling down",
   503: "no available credentials",
 };
+const FALLBACK_HTTP_STATUSES = new Set([400, 404, 429, 503]);
+
+export class WebSearchError extends Error {
+  readonly fallbackEligible: boolean;
+
+  constructor(message: string, options?: { fallbackEligible?: boolean }) {
+    super(message);
+    this.name = "WebSearchError";
+    this.fallbackEligible = Boolean(options?.fallbackEligible);
+  }
+}
+
 export interface SearchSource { url: string; title?: string }
 export interface SearchUpdate {
   content: Array<{ type: "text"; text: string }>;
@@ -59,8 +71,11 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
   }
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
+    signal.throwIfAborted();
     const hint = HTTP_ERROR_HINTS[response.status] ?? (response.status >= 500 ? "server error" : undefined);
-    throw new Error(`CLIProxyAPI web search failed (HTTP ${response.status})${hint ? `: ${hint}` : ""}.`);
+    throw new WebSearchError(`CLIProxyAPI web search failed (HTTP ${response.status})${hint ? `: ${hint}` : ""}.`, {
+      fallbackEligible: FALLBACK_HTTP_STATUSES.has(response.status),
+    });
   }
   if (!response.body) throw new Error("CLIProxyAPI search response has no body.");
   if (response.headers.get("content-type")?.includes("application/json")) {
@@ -102,7 +117,9 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
     if (!isRecord(data)) return;
     const type = typeof data.type === "string" ? data.type : event;
     if (["error", "response.failed", "response.incomplete", "response.cancelled"].includes(type)) {
-      throw new Error("CLIProxyAPI search response failed or was incomplete; check the model's native web search support and server logs.");
+      throw new WebSearchError("CLIProxyAPI search response failed or was incomplete; check the model's native web search support and server logs.", {
+        fallbackEligible: true,
+      });
     }
     if (type === "response.web_search_call.searching" && phase !== "searching") {
       phase = "searching";
@@ -133,7 +150,9 @@ Current reference date (UTC): ${new Date().toISOString().slice(0, 10)}. Use this
       }
     } else if (type === "response.completed") {
       const result = isRecord(data.response) ? data.response : data;
-      if (result.status && result.status !== "completed") throw new Error("CLIProxyAPI search did not complete successfully.");
+      if (result.status && result.status !== "completed") {
+        throw new WebSearchError("CLIProxyAPI search did not complete successfully.", { fallbackEligible: true });
+      }
       // Use this event only for sources, not as a replacement for streamed text.
       if (Array.isArray(result.output)) for (const item of result.output) extractSourcesFromItem(item);
       completed = true;

@@ -14,9 +14,10 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); rmSync(dir, { recursive: true, force: true }); });
 
-function register() {
+function register(pluginConfig?: Record<string, unknown>) {
   const api = {
     config: { tools: { web: { search: { enabled: false } } } },
+    pluginConfig,
     registerTool: vi.fn(), registerCommand: vi.fn(), logger: { warn: vi.fn() },
   };
   plugin.register(api as never);
@@ -36,13 +37,22 @@ function mockSearch() {
 const activeModel = { provider: "cliproxyapi", modelId: "current-model" };
 
 describe("OpenClaw integration", () => {
-  it("registers only web_search, without commands or plugin settings", () => {
+  it("registers web_search with optional searchModel schema and no commands", () => {
     const { api } = register();
     expect(api.registerTool).toHaveBeenCalledExactlyOnceWith(expect.any(Function), { name: "web_search" });
     expect(api.registerCommand).not.toHaveBeenCalled();
     expect(api.logger.warn).not.toHaveBeenCalled();
     const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf8"));
-    expect(manifest.configSchema).toEqual({ type: "object", additionalProperties: false, properties: {} });
+    expect(manifest.configSchema).toEqual({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        searchModel: {
+          type: "string",
+          description: expect.any(String),
+        },
+      },
+    });
     expect(manifest.uiHints).toBeUndefined();
   });
   it("follows independent active models for concurrent sessions without a model catalog", async () => {
@@ -85,9 +95,9 @@ describe("OpenClaw integration", () => {
     { provider: "other", modelRef: "cliproxyapi/current-model" },
     { modelRef: "other/current-model" },
   ])("rejects missing or non-CPA provider metadata without auth or HTTP: %j", async (activeModel) => {
-    const fetchFn = mockSearch(); const { factory } = register();
+    const fetchFn = mockSearch(); const { factory } = register({ searchModel: "gpt-5.4" });
     const resolveApiKeyForProvider = vi.fn();
-    await expect(factory({ activeModel, resolveApiKeyForProvider }).execute("1", { query: "q" })).rejects.toThrow(/only supports the current session's CLIProxyAPI model/);
+    await expect(factory({ activeModel, resolveApiKeyForProvider }).execute("1", { query: "q" })).rejects.toThrow(/only supports sessions using a CLIProxyAPI model/);
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
     expect(fetchFn).not.toHaveBeenCalled();
   });
@@ -101,17 +111,119 @@ describe("OpenClaw integration", () => {
     await expect(factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow(/model ID/);
     expect(fetchFn).not.toHaveBeenCalled();
   });
-  it("ignores legacy model overrides, session files and broken model catalogs", async () => {
+  it("ignores legacy session files, broken model catalogs and unsupported settings", async () => {
     const fetchFn = mockSearch(); const { api, factory } = register();
     const key = createHash("sha256").update(JSON.stringify(["main", "old-session"])).digest("hex");
     mkdirSync(join(dir, "cliproxyapi-websearch"));
     writeFileSync(join(dir, "cliproxyapi-websearch", `${key}.json`), JSON.stringify({ model: "old-pinned", updatedAt: Date.now() }));
     writeFileSync(join(dir, "cliproxyapi-models.json"), "invalid JSON");
-    const config = { ...api.config, plugins: { entries: { "cliproxyapi-websearch": { config: { searchModel: "old-configured", timeoutSeconds: 0, maxOutputChars: 1 } } } } };
+    const config = { ...api.config, plugins: { entries: { "cliproxyapi-websearch": { config: { timeoutSeconds: 0, maxOutputChars: 1 } } } } };
     const result = await factory({ activeModel, sessionId: "old-session", config }).execute("1", { query: "q" });
     expect(result.details.model).toBe("current-model");
     expect(result.details).not.toHaveProperty("truncated");
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it("uses configured searchModel when available without calling the current session model", async () => {
+    const fetchFn = mockSearch();
+    const { api, factory } = register({ searchModel: "cliproxyapi/preferred-search" });
+    const result = await factory({ activeModel }).execute("1", { query: "q" });
+    expect(fetchFn.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).model)).toEqual(["preferred-search"]);
+    expect(result.details).toMatchObject({ model: "preferred-search" });
+    expect(result.details).not.toHaveProperty("fallbackUsed");
+    expect(result.content[0].text).toMatch(/\n\nTook \d+\.\ds · cliproxyapi\/preferred-search$/);
+    // Runtime config clearing searchModel (including pruning config or the entry) falls back to zero-config behavior.
+    const cleared = { ...api.config, plugins: { entries: { "cliproxyapi-websearch": { config: {} } } } };
+    const clearedResult = await factory({ activeModel, getRuntimeConfig: () => cleared }).execute("2", { query: "q" });
+    expect(clearedResult.details.model).toBe("current-model");
+    const prunedConfig = { ...api.config, plugins: { entries: { "cliproxyapi-websearch": { enabled: true } } } };
+    const prunedConfigResult = await factory({ activeModel, getRuntimeConfig: () => prunedConfig }).execute("3", { query: "q" });
+    expect(prunedConfigResult.details.model).toBe("current-model");
+    const prunedEntryResult = await factory({ activeModel, getRuntimeConfig: () => api.config }).execute("4", { query: "q" });
+    expect(prunedEntryResult.details.model).toBe("current-model");
+  });
+  it.each([400, 404, 429, 503])("falls back to current session model on HTTP %s when searchModel is configured", async (status) => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response("unavailable", { status }))
+      .mockResolvedValueOnce(new Response('data: {"type":"response.output_text.done","text":"fallback ok"}\n\ndata: {"type":"response.completed"}\n\n'));
+    vi.stubGlobal("fetch", fetchFn);
+    const { factory } = register({ searchModel: "preferred-search" });
+    const updates: unknown[] = [];
+    const result = await factory({ activeModel }).execute("1", { query: "q" }, undefined, (u: unknown) => updates.push(u));
+    expect(fetchFn.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).model)).toEqual(["preferred-search", "current-model"]);
+    expect(updates.some((u) => (u as { details?: { phase?: string } }).details?.phase === "fallback")).toBe(true);
+    expect(result.details).toMatchObject({ model: "current-model", configuredModel: "preferred-search", fallbackUsed: true });
+    expect(result.content[0].text).toMatch(/\n\nTook \d+\.\ds · cliproxyapi\/current-model$/);
+  });
+  it.each([
+    'data: {"type":"error","error":{"message":"unsupported"}}\n\n',
+    'data: {"type":"response.failed"}\n\n',
+    'data: {"type":"response.incomplete"}\n\n',
+    'data: {"type":"response.cancelled"}\n\n',
+    'data: {"type":"response.completed","response":{"status":"failed"}}\n\n',
+  ])("falls back to current session model on in-stream failure %s", async (ssePayload) => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(new Response(ssePayload, { headers: { "content-type": "text/event-stream" } }))
+      .mockResolvedValueOnce(new Response('data: {"type":"response.output_text.done","text":"fallback ok"}\n\ndata: {"type":"response.completed"}\n\n'));
+    vi.stubGlobal("fetch", fetchFn);
+    const { factory } = register({ searchModel: "preferred-search" });
+    const result = await factory({ activeModel }).execute("1", { query: "q" });
+    expect(fetchFn.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string).model)).toEqual(["preferred-search", "current-model"]);
+    expect(result.details).toMatchObject({ model: "current-model", configuredModel: "preferred-search", fallbackUsed: true });
+  });
+  it.each([401, 403, 500, 502])("does not fall back on HTTP %s even when searchModel is configured", async (status) => {
+    const fetchFn = vi.fn(async () => new Response("err", { status }));
+    vi.stubGlobal("fetch", fetchFn);
+    const { factory } = register({ searchModel: "preferred-search" });
+    await expect(factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow(`HTTP ${status}`);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+  it("does not fall back on network errors, non-SSE JSON, truncated streams, empty output, or matching model", async () => {
+    const { factory } = register({ searchModel: "preferred-search" });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+    await expect(factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow(/Unable to connect/);
+    const jsonFetch = vi.fn(async () => new Response("{}", { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", jsonFetch);
+    await expect(factory({ activeModel }).execute("2", { query: "q" })).rejects.toThrow(/did not return an SSE stream/);
+    expect(jsonFetch).toHaveBeenCalledTimes(1);
+    const truncatedFetch = vi.fn(async () => new Response('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'));
+    vi.stubGlobal("fetch", truncatedFetch);
+    await expect(factory({ activeModel }).execute("3", { query: "q" })).rejects.toThrow(/ended unexpectedly/);
+    expect(truncatedFetch).toHaveBeenCalledTimes(1);
+    const emptyFetch = vi.fn(async () => new Response('data: {"type":"response.completed"}\n\n'));
+    vi.stubGlobal("fetch", emptyFetch);
+    await expect(factory({ activeModel }).execute("4", { query: "q" })).rejects.toThrow(/no result text/);
+    expect(emptyFetch).toHaveBeenCalledTimes(1);
+    const sameFetch = vi.fn(async () => new Response("bad", { status: 400 }));
+    vi.stubGlobal("fetch", sameFetch);
+    await expect(register({ searchModel: "current-model" }).factory({ activeModel }).execute("5", { query: "q" })).rejects.toThrow("HTTP 400");
+    expect(sameFetch).toHaveBeenCalledTimes(1);
+  });
+  it("does not fall back after caller cancellation or search timeout, and propagates fallback failure", async () => {
+    const timeoutController = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
+    try {
+      const fetchFn = vi.fn(async () => {
+        timeoutController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+        return new Response("unavailable", { status: 503 });
+      });
+      vi.stubGlobal("fetch", fetchFn);
+      await expect(register({ searchModel: "preferred-search" }).factory({ activeModel }).execute("1", { query: "q" })).rejects.toThrow("CLIProxyAPI web search timed out after 120 seconds; please retry.");
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally { timeout.mockRestore(); }
+    const caller = new AbortController();
+    const cancelFetch = vi.fn(async () => {
+      caller.abort(new Error("caller cancelled"));
+      return new Response("unavailable", { status: 400 });
+    });
+    vi.stubGlobal("fetch", cancelFetch);
+    await expect(register({ searchModel: "preferred-search" }).factory({ activeModel }).execute("2", { query: "q" }, caller.signal)).rejects.toThrow("caller cancelled");
+    expect(cancelFetch).toHaveBeenCalledTimes(1);
+    const bothFail = vi.fn()
+      .mockResolvedValueOnce(new Response("no search", { status: 400 }))
+      .mockResolvedValueOnce(new Response("also unavailable", { status: 503 }));
+    vi.stubGlobal("fetch", bothFail);
+    await expect(register({ searchModel: "preferred-search" }).factory({ activeModel }).execute("3", { query: "q" })).rejects.toThrow("HTTP 503");
+    expect(bothFail).toHaveBeenCalledTimes(2);
   });
   it("reuses the configured CPA provider identity without plugin settings", async () => {
     const fetchFn = mockSearch(); const { factory } = register();

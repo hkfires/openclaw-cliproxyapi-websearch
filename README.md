@@ -6,8 +6,8 @@ A native `web_search` plugin for [OpenClaw](https://github.com/openclaw) paired 
 
 ## Features
 
-- **Zero Configuration**: No plugin settings or setup commands required.
-- **Follows Active Model**: Always searches with the active CLIProxyAPI session model ID; fails directly without switching or falling back when the session uses another provider.
+- **No Extra Auth**: Reuses your existing CLIProxyAPI connection and credentials out of the box with zero required settings.
+- **Active Model & Optional Fallback**: Uses the active CLIProxyAPI session model by default; optionally prefers a dedicated `searchModel` and automatically falls back to the active session model if unavailable.
 - **Isolated Sub-requests**: Dispatches standalone Responses requests containing only the native `web_search` tool, without session history or local tools.
 - **Sources & Elapsed Time**: Streams search results and returns the summary, deduplicated source links, and execution time.
 
@@ -15,52 +15,55 @@ A native `web_search` plugin for [OpenClaw](https://github.com/openclaw) paired 
 
 - **OpenClaw**: `>=2026.9.4`
 - **Node.js**: `>=24.16.0 <25 || >=26.1.0`
-- **CLIProxyAPI**: `>=v7.3.5` (with an active model that supports native web search)
+- **CLIProxyAPI**: `>=v7.3.5` (with a search model that supports native web search)
 - [`openclaw-cliproxyapi-provider`](https://www.npmjs.com/package/openclaw-cliproxyapi-provider) installed and configured
 
-## Installation & Setup
+## Installation & Configuration
 
-### 1. Install Plugins
+### 1. Install Plugin
+
+Choose one method below:
+
+#### Install from ClawHub
 
 ```sh
-# 1. Install and enable the CLIProxyAPI provider plugin (if not already installed)
-openclaw plugins install clawhub:openclaw-cliproxyapi-provider
-openclaw plugins enable cliproxyapi
-
-# 2. Install and enable this web search plugin
 openclaw plugins install clawhub:openclaw-cliproxyapi-websearch
-openclaw plugins enable cliproxyapi-websearch
 ```
 
-Or install from npm:
+#### Install from npm
 
 ```sh
-openclaw plugins install npm:openclaw-cliproxyapi-provider
 openclaw plugins install npm:openclaw-cliproxyapi-websearch
 ```
 
-Local development install:
+#### Local development
 
 ```sh
 npm ci && npm run build
 openclaw plugins install --link .
-openclaw plugins enable cliproxyapi-websearch
 ```
 
-### 2. Disable Built-in Web Search
+### 2. Configure
+
+Disable OpenClaw's built-in `web_search` tool to avoid name conflicts, and optionally configure a preferred `searchModel`. Changes take effect automatically via hot reload without manual Gateway restart.
 
 #### Option 1: Via CLI Commands (Recommended)
 
-Disable OpenClaw's built-in `web_search` tool (to avoid name conflicts) and restart the gateway:
-
 ```sh
+# Required: disable built-in web_search
 openclaw config set tools.web.search.enabled false --strict-json
-openclaw gateway restart
+
+# Optional: prefer a dedicated search model (falls back to the active session model if unavailable)
+openclaw config set plugins.entries.cliproxyapi-websearch.config.searchModel gpt-6-luna
 ```
 
-#### Option 2: Edit Configuration File
+To clear `searchModel` and return to using the active session model directly:
 
-Or edit `~/.openclaw/openclaw.json` directly:
+```sh
+openclaw config unset plugins.entries.cliproxyapi-websearch.config.searchModel
+```
+
+#### Option 2: Edit `~/.openclaw/openclaw.json`
 
 ```json
 {
@@ -74,23 +77,21 @@ Or edit `~/.openclaw/openclaw.json` directly:
   "plugins": {
     "entries": {
       "cliproxyapi-websearch": {
-        "enabled": true
+        "enabled": true,
+        "config": {
+          "searchModel": "gpt-6-luna"
+        }
       }
     }
   }
 }
 ```
 
-Then validate and restart the gateway:
-
-```sh
-openclaw config validate
-openclaw gateway restart
-```
+*(Omit `config.searchModel` if you always want to search with the active session model. You can run `openclaw config validate` to verify syntax after editing.)*
 
 > Do not use `tools.deny: ["web_search"]` to disable built-in search, as that will also block this plugin's `web_search` tool. If `plugins.allow` is configured, add `cliproxyapi-websearch` to the allowlist.
 
-Once restarted, the agent will automatically call `web_search({ query })` whenever the session uses a `cliproxyapi/<model-id>` model.
+Whenever a session uses a `cliproxyapi/<model-id>` model, the agent will automatically call `web_search({ query })` for online research.
 
 ## Development
 
@@ -108,8 +109,8 @@ npm run build      # Build
 
 ## 特性
 
-- **零配置**：没有插件配置项，也不需要设置命令。
-- **跟随当前模型**：始终使用当前会话的 CLIProxyAPI 模型 ID 发起搜索；当前不是 CLIProxyAPI 模型时直接报错，不自动切换或回退。
+- **免额外鉴权**：直接复用已有 CLIProxyAPI 连接与凭据，默认零配置开箱即用。
+- **跟随当前模型与按需回退**：默认使用当前会话的 CLIProxyAPI 模型；也可配置专用 `searchModel`，不可用时自动回退到当前会话模型。
 - **纯净子请求**：独立发起仅包含原生 `web_search` 的 Responses 请求，不携带会话历史或本地工具，避免混合工具冲突。
 - **自动附加来源与耗时**：流式接收搜索结果，返回总结、去重来源链接与执行耗时。
 
@@ -117,52 +118,55 @@ npm run build      # Build
 
 - **OpenClaw**：`>=2026.9.4`
 - **Node.js**：`>=24.16.0 <25 || >=26.1.0`
-- **CLIProxyAPI**：`>=v7.3.5`，且当前模型支持原生网络搜索
+- **CLIProxyAPI**：`>=v7.3.5`，且搜索所用模型支持原生网络搜索
 - 已安装并配置 [`openclaw-cliproxyapi-provider`](https://www.npmjs.com/package/openclaw-cliproxyapi-provider)
 
 ## 安装与配置
 
 ### 1. 安装插件
 
-```sh
-# 1. 安装并启用 CLIProxyAPI Provider 插件（若未安装）
-openclaw plugins install clawhub:openclaw-cliproxyapi-provider
-openclaw plugins enable cliproxyapi
+以下方式任选其一：
 
-# 2. 安装并启用本搜索插件
+#### 从 ClawHub 安装
+
+```sh
 openclaw plugins install clawhub:openclaw-cliproxyapi-websearch
-openclaw plugins enable cliproxyapi-websearch
 ```
 
-也可以从 npm 安装：
+#### 从 npm 安装
 
 ```sh
-openclaw plugins install npm:openclaw-cliproxyapi-provider
 openclaw plugins install npm:openclaw-cliproxyapi-websearch
 ```
 
-本地开发安装：
+#### 本地开发安装
 
 ```sh
 npm ci && npm run build
 openclaw plugins install --link .
-openclaw plugins enable cliproxyapi-websearch
 ```
 
-### 2. 关闭内置网络搜索
+### 2. 配置
+
+关闭 OpenClaw 内置 `web_search` 以避免同名冲突，并可按需指定专用搜索模型 `searchModel`。修改会自动热加载生效，无需手动重启网关。
 
 #### 方式 1：通过命令行配置（推荐）
 
-关闭 OpenClaw 内置 `web_search`（避免同名冲突）并重启网关：
-
 ```sh
+# 必选：关闭内置 web_search
 openclaw config set tools.web.search.enabled false --strict-json
-openclaw gateway restart
+
+# 可选：指定专用搜索模型（不可用时自动回退到当前会话模型）
+openclaw config set plugins.entries.cliproxyapi-websearch.config.searchModel gpt-6-luna
 ```
 
-#### 方式 2：修改配置文件
+如需取消专用搜索模型、恢复直接使用当前会话模型：
 
-也可以直接编辑 `~/.openclaw/openclaw.json`：
+```sh
+openclaw config unset plugins.entries.cliproxyapi-websearch.config.searchModel
+```
+
+#### 方式 2：编辑 `~/.openclaw/openclaw.json`
 
 ```json
 {
@@ -176,23 +180,21 @@ openclaw gateway restart
   "plugins": {
     "entries": {
       "cliproxyapi-websearch": {
-        "enabled": true
+        "enabled": true,
+        "config": {
+          "searchModel": "gpt-6-luna"
+        }
       }
     }
   }
 }
 ```
 
-保存后校验并重启网关：
-
-```sh
-openclaw config validate
-openclaw gateway restart
-```
+*（若希望始终跟随当前会话模型，省略 `config.searchModel` 即可；手动编辑后可运行 `openclaw config validate` 校验语法。）*
 
 > 不要使用 `tools.deny: ["web_search"]` 关闭内置搜索，否则本插件注册的同名工具也会被禁用。若配置了 `plugins.allow`，请将 `cliproxyapi-websearch` 加入列表。
 
-重启后，当会话使用 `cliproxyapi/<model-id>` 模型时，Agent 会自动调用 `web_search({ query })` 执行实时搜索。
+配置完成后，当会话使用 `cliproxyapi/<model-id>` 模型时，Agent 会自动调用 `web_search({ query })` 执行实时搜索。
 
 ## 开发与测试
 

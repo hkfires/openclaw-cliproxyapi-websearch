@@ -56,6 +56,27 @@ export function resolveConnection(cfg: HostConfig, configDir = getConfigDir()): 
   };
 }
 
+export function resolveSearchModel(cfg: HostConfig, provider: string, pluginConfig?: unknown): string | undefined {
+  const entry = cfg.plugins?.entries?.[PLUGIN_ID];
+  const rawConfig = isRecord(entry) && "config" in entry
+    ? (isRecord(entry.config) ? entry.config : undefined)
+    : (isRecord(pluginConfig) ? pluginConfig : undefined);
+  const raw = rawConfig?.searchModel;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") {
+    throw new Error("CLIProxyAPI web search config searchModel must be a string.");
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const prefix = `${provider}/`;
+  if (trimmed.startsWith(prefix)) {
+    const modelId = trimmed.slice(prefix.length).trim();
+    if (!modelId) throw new Error("CLIProxyAPI web search config searchModel is missing a model ID.");
+    return modelId;
+  }
+  return trimmed;
+}
+
 export async function resolveHeaders(
   connection: ReturnType<typeof resolveConnection>,
   cfg: HostConfig,

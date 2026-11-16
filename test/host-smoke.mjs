@@ -23,7 +23,13 @@ const server = createServer(async (req, res) => {
   }
   let raw = '';
   for await (const chunk of req) raw += chunk;
-  bodies.push(JSON.parse(raw));
+  const parsed = JSON.parse(raw);
+  bodies.push(parsed);
+  if (parsed.model === 'unavailable-search-model') {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'model unavailable' } }));
+    return;
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   for (const event of [
     { type: 'response.web_search_call.searching' },
@@ -119,7 +125,7 @@ try {
   });
   const otherSearch = otherTools.find(tool => tool.name === 'web_search');
   assert.ok(otherSearch);
-  await assert.rejects(otherSearch.execute('other-call', { query: 'must not search' }), /only supports the current session's CLIProxyAPI model/);
+  await assert.rejects(otherSearch.execute('other-call', { query: 'must not search' }), /only supports sessions using a CLIProxyAPI model/);
   const missingModelTools = createOpenClawTools({
     config, workspaceDir: workspace, agentDir,
     modelProvider: 'cliproxyapi',
@@ -129,8 +135,47 @@ try {
   assert.ok(missingModelSearch);
   await assert.rejects(missingModelSearch.execute('missing-model-call', { query: 'must not search' }), /model ID/);
   assert.equal(bodies.length, 4, 'other providers and missing models never issue search requests');
+  const configuredConfig = {
+    ...runtimeConfig,
+    plugins: {
+      ...runtimeConfig.plugins,
+      entries: { 'cliproxyapi-websearch': { enabled: true, config: { searchModel: 'configured-search-model' } } },
+    },
+  };
+  await writeFile(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(configuredConfig));
+  await run('config', 'validate');
+  const configuredTools = createOpenClawTools({
+    config: configuredConfig, workspaceDir: workspace, agentDir,
+    modelProvider: 'cliproxyapi', modelId: 'active-smoke-model',
+    disableMessageTool: true, wrapBeforeToolCallHook: false,
+  });
+  const configuredSearch = configuredTools.find(tool => tool.name === 'web_search');
+  assert.ok(configuredSearch);
+  const configuredResult = await configuredSearch.execute('configured-call', { query: 'configured model' });
+  assert.equal(configuredResult.details.model, 'configured-search-model');
+  assert.equal(bodies[4].model, 'configured-search-model');
+  const fallbackConfig = {
+    ...runtimeConfig,
+    plugins: {
+      ...runtimeConfig.plugins,
+      entries: { 'cliproxyapi-websearch': { enabled: true, config: { searchModel: 'unavailable-search-model' } } },
+    },
+  };
+  const fallbackTools = createOpenClawTools({
+    config: fallbackConfig, workspaceDir: workspace, agentDir,
+    modelProvider: 'cliproxyapi', modelId: 'active-smoke-model',
+    disableMessageTool: true, wrapBeforeToolCallHook: false,
+  });
+  const fallbackSearch = fallbackTools.find(tool => tool.name === 'web_search');
+  assert.ok(fallbackSearch);
+  const fallbackResult = await fallbackSearch.execute('fallback-call', { query: 'fallback model' });
+  assert.equal(fallbackResult.details.model, 'active-smoke-model');
+  assert.equal(fallbackResult.details.configuredModel, 'unavailable-search-model');
+  assert.equal(fallbackResult.details.fallbackUsed, true);
+  assert.equal(bodies[5].model, 'unavailable-search-model');
+  assert.equal(bodies[6].model, 'active-smoke-model');
   assert.deepEqual(inspection.plugin.commandNames ?? [], []);
-  console.log('PASS: real host preserves body whitespace, reuses runtime provider URL/auth, normalizes legacy URLs, uses the current CPA model and UTC date, and rejects other providers/missing models without fallback.');
+  console.log('PASS: real host validates searchModel schema, preserves body whitespace, reuses runtime provider URL/auth, normalizes legacy URLs, supports searchModel with fallback to the active CPA model, and rejects other providers/missing models.');
 } finally {
   // Windows cannot remove SQLite files until the host's process-wide handles close.
   const hostDist = resolve('node_modules/openclaw/dist');
